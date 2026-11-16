@@ -1,0 +1,3 @@
+# Instala el proyecto (paquete despacho_multiobjetivo) en modo editable con sus dependencias y las de pruebas.
+# Las dependencias están en pyproject.toml.
+-e .[pruebas]

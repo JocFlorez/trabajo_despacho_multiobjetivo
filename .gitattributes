@@ -1,0 +1,7 @@
+# Finales de línea uniformes: en el repositorio LF, en la carpeta de trabajo CRLF (Windows)
+* text=auto eol=crlf
+
+# Archivos binarios: nunca se convierten
+*.png binary
+*.xlsx binary
+*.parquet binary

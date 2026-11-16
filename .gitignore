@@ -1,0 +1,12 @@
+# Entorno y cachés de Python
+.venv/
+__pycache__/
+.pytest_cache/
+*.egg-info/
+build/
+
+# Datos de la empresa (confidenciales y pesados): no se versionan
+data/
+
+# Archivos temporales de Office
+~$*

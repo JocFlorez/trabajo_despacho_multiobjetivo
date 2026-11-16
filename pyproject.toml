@@ -1,0 +1,33 @@
+[build-system]
+requires = ["setuptools>=61"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "despacho_multiobjetivo"
+version = "0.1.0"
+description = "Modelo multiobjetivo para el apoyo a decisiones de despacho en empresas generadoras de carga"
+requires-python = ">=3.10"
+dependencies = [
+    "pandas",
+    "numpy",
+    "openpyxl",
+    "pulp",
+    "pyarrow",
+    "tqdm",
+    "holidays",
+    "highspy",
+    "xlwings",
+    "pyomo",
+    "pymoo",
+    "matplotlib",
+]
+
+[project.optional-dependencies]
+pruebas = ["pytest"]
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.pytest.ini_options]
+pythonpath = ["src", "."]
+testpaths = ["tests"]
