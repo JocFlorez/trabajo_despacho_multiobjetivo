@@ -107,7 +107,11 @@ def review_push(lineas: list[str]) -> list[str]:
         partes = linea.split()
         if len(partes) != 4 or partes[1] == CERO:
             continue                                                  # borrar una rama remota: nada que revisar
-        rango = [partes[1], "--not", "--remotes"] if partes[3] == CERO else [f"{partes[3]}..{partes[1]}"]
+        # Rama nueva, o remota que no está en este equipo (p. ej. el README que crea GitHub, que se reemplaza
+        # con --force): se revisan todos los commits que no están ya en el remoto
+        conocida = partes[3] != CERO and subprocess.run(["git", "cat-file", "-e", f"{partes[3]}^{{commit}}"],
+                                                         cwd=RAIZ, capture_output=True).returncode == 0
+        rango = [f"{partes[3]}..{partes[1]}"] if conocida else [partes[1], "--not", "--remotes"]
         for commit in _git("rev-list", *rango).split():
             errores += _review_commit(commit, prohibidos, nombres)
     return errores
