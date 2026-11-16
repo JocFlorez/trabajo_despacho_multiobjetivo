@@ -1,5 +1,8 @@
 {
   "_nota": "Valores INVENTADOS con el mismo formato de data/external/datos_empresa.json (que no se publica).",
+  "nombre_empresa": [
+    "EMPRESA EJEMPLO"
+  ],
   "archivo_despachos": "despachos.xlsx",
   "guia_region": {
     "00000000001": "EJE_CAFETERO"

@@ -217,7 +217,7 @@ def test_todo_directo():
 
 
 def test_plan_con_clientes_y_relleno_del_traslado():
-    # C_0 y C_1 el martes: 4.000 kg → 1 Turbo ($2.000.000) con 500 kg libres → sube 1/4 de T_0 (2.000 kg)
+    # C_0 y C_1 el martes: 4.000 kg → 1 Turbo ($2.100.000) con 500 kg libres → sube 1/4 de T_0 (2.000 kg)
     _, _, instancia = _instancia()
     resultado = evaluate_plan({"C_0": MAR, "C_1": MAR}, instancia)
     assert resultado["relleno"] == pytest.approx({("T_0", MAR): 0.25})
