@@ -1,4 +1,5 @@
 from pathlib import Path
+import numpy as np
 import pandas as pd
 import tempfile
 import shutil
@@ -51,7 +52,40 @@ CIUDAD_REGION_OVERRIDE = {
     # siempre son los municipios de Antioquia.
     "RIONEGRO": "ANTIOQUIA_CHOCO",
     "CALDAS": "ANTIOQUIA_CHOCO",
+    # GUAMAL existe en Magdalena y en Meta; el histórico lo escribe así cuando es el del Meta
+    "GUAMAL - META": "CENTRO",
 }
+
+# Nombres de ciudad del histórico 2024–2026 que no están en divipola → nombre de divipola (revisado con
+# Johan el 2026-11-16). Abreviaturas, errores de escritura, nombres cortados y corregimientos. Cuando el
+# despacho trae dos ciudades se toma la primera. Queda sin corregir "0" (no se puede saber cuál es);
+# "SAN JOSE D" depende de la sede (CIUDAD_CORRECCION_POR_SEDE).
+CIUDAD_CORRECCION = {
+    "B/QUILLA": "BARRANQUILLA", "B/MANGA": "BUCARAMANGA", "V/CENCIO": "VILLAVICENCIO",
+    "B/BERMEJA": "BARRANCABERMEJA", "F/BLANCA": "FLORIDABLANCA", "S/MARTA": "SANTA MARTA",
+    "P/DECUESTA": "PIEDECUESTA", "S/DETORRES": "SABANA DE TORRES",
+    "SANTAMARTA": "SANTA MARTA", "PERREIRA": "PEREIRA", "IBAGUÉ": "IBAGUE", "TIERRA ALTA": "TIERRALTA",
+    "DIBULA": "DIBULLA", "DON MATIAS": "DONMATIAS",
+    "SAN JOSE GUAVIARE": "SAN JOSE DEL GUAVIARE",
+    "SAN SOJE": "SAN JOSE DEL GUAVIARE",   # mismo transportador (COOTRANSTAME) que los de San José del Guaviare
+    "SAN JERONI": "SAN JERONIMO", "PUERTO TEJ": "PUERTO TEJADA", "GUADALAJAR": "GUADALAJARA DE BUGA",
+    "CASTILLA L": "CASTILLA LA NUEVA", "BELEN DE U": "BELEN DE UMBRIA", "JESUS MARI": "JESUS MARIA",
+    "DAPA": "YUMBO", "ARMERO GUAYABAL": "ARMERO", "GRANADA - META": "GRANADA",
+    "PUEBLO NUEVO - ARAUQUITA": "ARAUQUITA",
+    "LA GRAN VI": "LA GRAN VIA",           # el de Magdalena (Johan, 2026-11-16); divipola lo resuelve a Magdalena
+    "MEDELLIN Y SABANETA": "MEDELLIN", "MEDELLIN Y MONTERIA": "MEDELLIN", "CALI Y YUMBO": "CALI",
+    "BUCARAMANGA Y BARRANCABERMEJA": "BUCARAMANGA", "BARRANCABERMEJA Y BUCARAMANGA": "BARRANCABERMEJA",
+    "MANIZALES Y PEREIRA": "MANIZALES", "PEREIRA-MANIZALES": "PEREIRA",
+}
+
+# Nombres que dependen de la sede de origen (Johan, 2026-11-16): (sede, ciudad) → nombre de divipola.
+# 0111 es Mosquera; 0106 y 0212 son las sedes de Medellín (CEDI de Sabaneta)
+CIUDAD_CORRECCION_POR_SEDE = {
+    ("0111", "SAN JOSE D"): "SAN JOSE DEL GUAVIARE",
+    ("0106", "SAN JOSE D"): "SAN JOSE DEL NUS",
+    ("0212", "SAN JOSE D"): "SAN JOSE DEL NUS",
+}
+
 # Guía → región y guía → ciudad (traslados a PAI con ciudad_destino vacía en el Excel crudo; la ciudad se
 # identifica por el PAI del destinatario o la dirección). Los números de guía son de la empresa y no se
 # publican: vienen de data/external/datos_empresa.json (ver datos_empresa.py)
@@ -63,7 +97,16 @@ GUIA_CIUDAD_OVERRIDE = DATOS["guia_ciudad"]
 TIPOS_SIN_PARTIR = ("CLIENTES", "OTROS")
 
 # Movimientos que llegan al CEDI en lugar de salir de él: no entran al modelo
-TIPOS_ENTRADA_AL_CEDI = ("PROVEEDORES", "DEVOLUCION")
+# (en el histórico 2024–2026 las devoluciones vienen en plural)
+TIPOS_ENTRADA_AL_CEDI = ("PROVEEDORES", "DEVOLUCION", "DEVOLUCIONES")
+
+# Variantes del tipo de despacho en el histórico → nombre único
+TIPO_DESPACHO_UNIFICADO = {"TRASLADO AL GASTO": "TRASLADOS AL GASTO",
+                           "CX": "OTROS", "COMEX": "OTROS", "VARIOS": "OTROS"}
+
+# Formatos de fecha del histórico, en el orden en que se prueban (en el Excel de 2026 ya llegan como fecha).
+# Con barras se lee día/mes; mes/día solo si día/mes es imposible (ver parse_dates)
+FORMATOS_FECHA = ("%Y-%m-%d %H:%M:%S", "%Y-%m-%d", "%d/%m/%Y %I:%M:%S %p", "%d/%m/%Y")
 
 # Razón social en el archivo de despachos → nombre comercial (el que usa el cotizador)
 NOMBRE_TRANSPORTADORA = {"COLVANES": "ENVIA"}
@@ -100,9 +143,142 @@ def clean_column_types(df: pd.DataFrame) -> pd.DataFrame:
     df["sede"] = df["sede"].astype(str).str.strip().str.zfill(4)
     df["sede_flete"] = df["sede_flete"].astype(str).str.strip().str.zfill(4)
     df["mes"] = pd.to_datetime(df["mes"], errors="coerce")
-    df["fecha_captura"] = pd.to_datetime(df["fecha_captura"], errors="coerce", dayfirst=True)
-    df["fecha_entrega"] = pd.to_datetime(df["fecha_entrega"], errors="coerce", dayfirst=True)
+    df["fecha_captura"] = parse_dates(df["fecha_captura"])
+    df["fecha_entrega"] = parse_dates(df["fecha_entrega"])
+    if "dias_promesa_entrega" in df:
+        df["dias_promesa_entrega"] = pd.to_numeric(df["dias_promesa_entrega"], errors="coerce")   # texto en el histórico
     return df
+
+def parse_dates(columna: pd.Series) -> pd.Series:
+    # Lee fechas con formatos mezclados (FORMATOS_FECHA) y las deja en el día, sin hora.
+    # Con barras se lee día/mes; solo si eso es imposible (segundo número > 12) se lee mes/día.
+    # Lo que no encaja en ningún formato queda vacío (NaT).
+    if pd.api.types.is_datetime64_any_dtype(columna):
+        return columna.dt.normalize()
+
+    # 1. "p.m." → "PM" para que lo entienda %p
+    texto = (columna.astype("string").str.strip()
+             .str.replace("a.m.", "AM", regex=False).str.replace("p.m.", "PM", regex=False))
+
+    # 2. Cada valor se queda con el primer formato que encaje
+    fechas = pd.Series(pd.NaT, index=columna.index, dtype="datetime64[ns]")
+    for formato in FORMATOS_FECHA:
+        faltan = fechas.isna()
+        fechas[faltan] = pd.to_datetime(texto[faltan], format=formato, errors="coerce")
+
+    # 3. Barras donde día/mes es imposible: mes/día
+    faltan = fechas.isna()
+    fechas[faltan] = pd.to_datetime(texto[faltan].str.split().str[0], format="%m/%d/%Y", errors="coerce")
+    return fechas.dt.normalize()
+
+def normalize_dispatch_type(df: pd.DataFrame) -> pd.DataFrame:
+    # Quita espacios sobrantes ("TRASLADOS   " → "TRASLADOS") y unifica variantes (TIPO_DESPACHO_UNIFICADO)
+    df = df.copy()
+    tipo = df["tipo_despacho"].astype("string").str.strip().str.replace(r"\s+", " ", regex=True)
+    df["tipo_despacho"] = tipo.replace(TIPO_DESPACHO_UNIFICADO)
+    return df
+
+def drop_exact_duplicates(df: pd.DataFrame) -> pd.DataFrame:
+    # Filas idénticas en todas las columnas: se deja una
+    duplicadas = df.duplicated()
+    if duplicadas.any():
+        print(f"ADVERTENCIA: se quitan {duplicadas.sum()} filas idénticas a otra")
+    return df[~duplicadas].copy()
+
+def _has_value(serie: pd.Series) -> pd.Series:
+    # True donde el campo trae un dato real (no vacío ni "NO DISPONIBLE")
+    texto = serie.astype("string").str.strip().str.upper()
+    return (serie.notna() & ~texto.isin(["", "NAN", "NONE", "<NA>", "NO DISPONIBLE"])).fillna(False).astype(bool)
+
+def resolve_duplicate_records(df: pd.DataFrame) -> pd.DataFrame:
+    # Filas con la misma guía, fecha de captura, peso y destino (revisadas con Johan el 2026-11-16):
+    # Solo se agrupan filas con guía y peso, y solo si alguna fila del grupo trae factura (sin ninguna, como en
+    # flota propia, no hay cómo saber si son repetidos).
+    #   E. cada documento distinto es un pedido distinto (la guía puede ser la placa del camión) → se conserva
+    #   Si los documentos están vacíos o son el mismo:
+    #   B. misma factura, distinto tipo y distinto flete: un despacho con el cobro partido → una fila con el flete
+    #      sumado y el tipo del cobro mayor (el peso queda una sola vez)
+    #   A. misma factura, distinto tipo y mismo flete: el mismo despacho registrado dos veces → queda el de CLIENTES
+    #      (decisión de Johan del 2026-11-16); si ninguno es CLIENTES, el primero
+    #   C. el mismo documento facturado en dos meses contables → queda el del mes más antiguo
+    #   D. filas sin documento cuando otra del grupo sí lo trae (copia sin factura) → se quitan; si ninguna trae
+    #      documento, queda una: la que trae factura, luego la del mes más antiguo
+    clave = ["guia", "fecha_captura", "peso", "ciudad_destino"]
+    identificables = df["guia"].notna() & df["peso"].notna()
+    repetidas = identificables & df.duplicated(subset=clave, keep=False)
+    if not repetidas.any():
+        return df
+
+    # 1. Qué trae cada fila
+    df = df.copy()
+    factura = df["factura"] if "factura" in df else pd.Series(pd.NA, index=df.index)
+    con_documento, con_factura = _has_value(df["documento"]), _has_value(factura)
+
+    # 2. Decidir grupo por grupo
+    quitar, unidos, depurados = [], 0, 0
+    for _, grupo in df[repetidas].groupby(clave, dropna=False):
+        filas = grupo.index
+        if not con_factura[filas].any():
+            continue                                                            # sin factura: no se sabe
+        documentos = grupo["documento"].astype("string").str.strip()[con_documento[filas]]
+        misma_factura = con_factura[filas].all() and factura[filas].nunique() == 1
+        if documentos.nunique() <= 1 and misma_factura and grupo["tipo_despacho"].nunique() > 1:
+            fletes = grupo["valor_flete"]
+            if np.isclose(fletes.min(), fletes.max(), rtol=0.01):              # A
+                clientes = grupo.index[grupo["tipo_despacho"] == "CLIENTES"]
+                conservar = clientes[0] if len(clientes) else filas[0]
+                quitar += [fila for fila in filas if fila != conservar]
+                depurados += 1
+                continue
+            principal = fletes.idxmax()                                         # B
+            df.loc[principal, "valor_flete"] = fletes.sum()
+            quitar += [fila for fila in filas if fila != principal]
+            unidos += 1
+            continue
+        orden = pd.DataFrame({"documento": grupo["documento"].astype("string").str.strip(),
+                              "con_documento": con_documento[filas], "factura": con_factura[filas],
+                              "mes": grupo["mes"]}).sort_values(["factura", "mes"], ascending=[False, True])
+        if orden["con_documento"].any():
+            # E y C: una fila por documento distinto (la del mes más antiguo); D: fuera las que no traen
+            conservar = orden[orden["con_documento"]].drop_duplicates("documento").index
+        else:
+            conservar = orden.index[:1]                                         # D sin documentos
+        sobran = [fila for fila in filas if fila not in conservar]
+        if sobran:
+            quitar += sobran
+            depurados += 1
+
+    if quitar:
+        print(f"ADVERTENCIA: registros repetidos: {unidos} despachos con el cobro partido se unen y "
+              f"{depurados} registrados dos veces quedan en uno ({len(quitar)} filas menos)")
+    return df.drop(index=quitar)
+
+def exclude_non_positive_weight(df: pd.DataFrame) -> pd.DataFrame:
+    # Peso <= 0: sin carga real. El peso vacío no se toca aquí (lo quita get_shipments)
+    sin_peso = df["peso"] <= 0
+    if sin_peso.any():
+        print(f"ADVERTENCIA: se quitan {sin_peso.sum()} despachos con peso <= 0")
+    return df[~sin_peso].copy()
+
+def blank_impossible_dates(df: pd.DataFrame) -> pd.DataFrame:
+    # Se borra solo el dato malo, no el despacho
+    df = df.copy()
+    entrega_antes = df["fecha_entrega"] < df["fecha_captura"]
+    promesa_negativa = df["dias_promesa_entrega"] < 0
+    df.loc[entrega_antes, "fecha_entrega"] = pd.NaT
+    df.loc[promesa_negativa, "dias_promesa_entrega"] = np.nan
+    if entrega_antes.any() or promesa_negativa.any():
+        print(f"ADVERTENCIA: se borran {entrega_antes.sum()} fechas de entrega anteriores a la captura "
+              f"y {promesa_negativa.sum()} promesas de entrega negativas")
+    return df
+
+def clean_shipments(df: pd.DataFrame) -> pd.DataFrame:
+    # Limpieza común del Excel de 2026 y del histórico (process_shipments y scripts/cotizar_historico.py)
+    df = normalize_dispatch_type(df)
+    df = drop_exact_duplicates(df)
+    df = resolve_duplicate_records(df)
+    df = exclude_non_positive_weight(df)
+    return blank_impossible_dates(df)
 
 def load_shipments() -> pd.DataFrame:
     return clean_column_types(standardize_columns(read_shipments_file()))
@@ -112,8 +288,18 @@ def filter_cedis(df: pd.DataFrame):
     return df_filtrado
 
 def normalize_city(city):
-    city = city.str.upper().str.strip()
-    return city
+    # Mayúsculas, sin espacios ni comillas al inicio o al final ("'BARRANQUILLA" → "BARRANQUILLA"),
+    # y nombres corregidos según CIUDAD_CORRECCION
+    city = city.str.upper().str.strip().str.strip("'\"").str.strip()
+    return city.replace(CIUDAD_CORRECCION)
+
+def correct_city_by_origin(df: pd.DataFrame) -> pd.DataFrame:
+    # Ciudades cuyo nombre depende de la sede de origen (CIUDAD_CORRECCION_POR_SEDE); va después de normalize_city
+    df = df.copy()
+    corregida = [CIUDAD_CORRECCION_POR_SEDE.get((sede, ciudad), ciudad)
+                 for sede, ciudad in zip(df["sede"], df["ciudad_destino"])]
+    df["ciudad_destino"] = pd.Series(corregida, index=df.index, dtype=df["ciudad_destino"].dtype)
+    return df
 
 def search_department(df_filtrado: pd.DataFrame, divipola: pd.DataFrame):
     diccionarioMunicipio = dict(zip(divipola["Municipio"],divipola["Departamento"]))
@@ -126,10 +312,13 @@ def search_department(df_filtrado: pd.DataFrame, divipola: pd.DataFrame):
 
 
 def exclude_metro_area(df) -> pd.DataFrame:
+    # La ciudad se compara ya normalizada: en ene–jun 2024 viene " MOSQUERA" (con espacio) y se colaban
+    # los despachos urbanos al área metropolitana
     df = df.copy()
+    ciudad = normalize_city(df["ciudad_destino"])
     df = df[~(
-        ((df["sede"] == SEDE_BARRANQUILLA) & (df["ciudad_destino"].isin(BARRANQUILLA_METRO))) |
-        ((df["sede"] == SEDE_MOSQUERA) & (df["ciudad_destino"].isin(BOGOTA_METRO)))
+        ((df["sede"] == SEDE_BARRANQUILLA) & (ciudad.isin(BARRANQUILLA_METRO))) |
+        ((df["sede"] == SEDE_MOSQUERA) & (ciudad.isin(BOGOTA_METRO)))
     )].copy()
     return df
 
@@ -340,6 +529,7 @@ def process_shipments() -> pd.DataFrame:
     df = load_shipments()
     df = fill_destination_city(df)
     df = fill_units(df)
+    df = clean_shipments(df)
     df = filter_cedis(df)
     df = exclude_metro_area(df)
     df = exclude_inbound_to_cedi(df)
@@ -347,6 +537,7 @@ def process_shipments() -> pd.DataFrame:
 
     divipola = pd.read_excel(EXTERNAL / "divipola.xlsx")
     df["ciudad_destino"] = normalize_city(df["ciudad_destino"])
+    df = correct_city_by_origin(df)
     divipola["Municipio"] = normalize_city(divipola["Municipio"])
     divipola["CentroPoblado"] = normalize_city(divipola["CentroPoblado"])
     divipola["Departamento"] = normalize_city(divipola["Departamento"])

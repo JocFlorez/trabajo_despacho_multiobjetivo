@@ -1,5 +1,6 @@
-"""Cotiza el histórico 2025-01 a 2026-10 de la sede 0111 (decisión del usuario del 2026-11-08: 2025 y 2026 para la
-simulación principal) y guarda todo en la caché del cotizador (data/processed/cotizaciones_cache.parquet).
+"""Cotiza el histórico 2024-01 a 2026-10 de la sede 0111 y guarda todo en la caché del cotizador
+(data/processed/cotizaciones_cache.parquet). 2025 y 2026 son la simulación principal (decisión del usuario del
+2026-11-08); 2024 se agregó el 2026-11-16 para la serie del flete actualizado a las tarifas de este año.
 
 Lee la copia en parquet del Excel de despachos (data/processed/despachos_2024_2026_crudo.parquet) y aplica los mismos
 pasos del cargador (process_shipments, get_shipments, rate_shipments, rate_ltl_direct) para armar las consultas:
@@ -18,7 +19,7 @@ import pandas as pd
 from despacho_multiobjetivo.config import EXTERNAL, PROCESSED
 from despacho_multiobjetivo.datos import data_processing as dp
 
-SEDE, DESDE, HASTA = "0111", "2025-01-01", "2026-10-31"
+SEDE, DESDE, HASTA = "0111", "2024-01-01", "2026-10-31"
 COPIA_DESPACHOS = PROCESSED / "despachos_2024_2026_crudo.parquet"
 
 
@@ -33,11 +34,13 @@ def shipments_to_quote() -> pd.DataFrame:
     df = dp.clean_column_types(pd.read_parquet(COPIA_DESPACHOS))
     df = dp.fill_destination_city(df)
     df = dp.fill_units(df)
+    df = dp.clean_shipments(df)
     df = dp.filter_cedis(df)
     df = dp.exclude_metro_area(df)
     df = dp.exclude_inbound_to_cedi(df)
     divipola = pd.read_excel(EXTERNAL / "divipola.xlsx")
     df["ciudad_destino"] = dp.normalize_city(df["ciudad_destino"])
+    df = dp.correct_city_by_origin(df)
     for columna in ("Municipio", "CentroPoblado", "Departamento"):
         divipola[columna] = dp.normalize_city(divipola[columna])
     df = dp.search_department(df, divipola)

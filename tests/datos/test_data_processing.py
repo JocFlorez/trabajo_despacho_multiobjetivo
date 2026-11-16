@@ -73,6 +73,201 @@ def test_search_department_usa_centro_poblado_si_no_es_municipio():
     assert pd.isna(resultado.loc[2, "departamento"])
 
 
+# ------------------------------------------------- limpieza del histórico
+
+def test_leer_fechas_con_formatos_mezclados():
+    # Los cuatro formatos que trae el histórico dan la misma fecha, sin hora
+    columna = pd.Series(["2025-05-28 00:00:00", "2025-05-28", "28/05/2025 07:43:01 p.m.", "28/05/2025"])
+    fechas = dp.parse_dates(columna)
+    assert (fechas == pd.Timestamp("2025-05-28")).all()
+
+
+def test_leer_fechas_con_barras_es_dia_mes():
+    assert dp.parse_dates(pd.Series(["4/03/2026"]))[0] == pd.Timestamp("2026-03-04")
+
+
+def test_leer_fechas_mes_dia_solo_si_dia_mes_es_imposible():
+    # 6/13/2024 no puede ser día 6 del mes 13: es 13 de junio
+    assert dp.parse_dates(pd.Series(["6/13/2024"]))[0] == pd.Timestamp("2024-06-13")
+
+
+def test_leer_fechas_basura_o_vacia_queda_vacia():
+    fechas = dp.parse_dates(pd.Series(["99/999999", "10:22:33", None]))
+    assert fechas.isna().all()
+
+
+def test_leer_fechas_que_ya_son_fecha_no_cambian():
+    columna = pd.Series(pd.to_datetime(["2026-01-05", "2026-01-06"]))
+    assert dp.parse_dates(columna).tolist() == columna.tolist()
+
+
+def test_limpiar_tipos_columnas_convierte_dias_promesa_a_numero():
+    df = pd.DataFrame({
+        "peso": ["120"], "valor_flete": ["5000"], "unidades": ["3"], "sede": ["111"], "sede_flete": ["106"],
+        "mes": ["2025-05-01"], "fecha_captura": ["2025-05-28"], "fecha_entrega": ["30/05/2025"],
+        "dias_promesa_entrega": ["3"],
+    })
+    limpio = dp.clean_column_types(df)
+    assert limpio.loc[0, "dias_promesa_entrega"] == 3
+    assert limpio.loc[0, "fecha_entrega"] == pd.Timestamp("2025-05-30")
+
+
+def test_normalizar_tipo_quita_espacios_y_unifica():
+    df = pd.DataFrame({"tipo_despacho": ["TRASLADOS   ", " CLIENTES", "TRASLADO AL GASTO", "CX", "COMEX", "VARIOS"]})
+    assert dp.normalize_dispatch_type(df)["tipo_despacho"].tolist() == \
+        ["TRASLADOS", "CLIENTES", "TRASLADOS AL GASTO", "OTROS", "OTROS", "OTROS"]
+
+
+def test_excluir_entradas_al_cedi_quita_devoluciones_en_plural():
+    df = pd.DataFrame({"tipo_despacho": ["CLIENTES", "DEVOLUCIONES"]})
+    assert dp.exclude_inbound_to_cedi(df)["tipo_despacho"].tolist() == ["CLIENTES"]
+
+
+def test_quitar_duplicados_deja_una_y_respeta_guias_con_datos_distintos():
+    df = pd.DataFrame({"guia": ["A", "A", "B", "B"], "peso": [10.0, 10.0, 5.0, 7.0]})
+    resultado = dp.drop_exact_duplicates(df)
+    assert list(zip(resultado["guia"], resultado["peso"])) == [("A", 10.0), ("B", 5.0), ("B", 7.0)]
+
+
+def test_excluir_peso_no_positivo_deja_los_vacios():
+    # El peso vacío no se quita aquí: lo quita get_shipments
+    df = pd.DataFrame({"peso": [0.0, -5.0, 12.0, np.nan]})
+    resultado = dp.exclude_non_positive_weight(df)
+    assert resultado["peso"].tolist()[0] == 12.0
+    assert len(resultado) == 2 and resultado["peso"].isna().sum() == 1
+
+
+def test_borrar_fechas_imposibles_conserva_el_despacho():
+    df = pd.DataFrame({
+        "fecha_captura": pd.to_datetime(["2025-05-10", "2025-05-10"]),
+        "fecha_entrega": pd.to_datetime(["2025-05-08", "2025-05-12"]),
+        "dias_promesa_entrega": [-1.0, 2.0],
+    })
+    resultado = dp.blank_impossible_dates(df)
+    assert len(resultado) == 2
+    assert pd.isna(resultado.loc[0, "fecha_entrega"]) and pd.isna(resultado.loc[0, "dias_promesa_entrega"])
+    assert resultado.loc[1, "fecha_entrega"] == pd.Timestamp("2025-05-12")
+    assert resultado.loc[1, "dias_promesa_entrega"] == 2
+
+
+def test_limpiar_despachos_aplica_todos_los_pasos():
+    df = pd.DataFrame({
+        "guia": ["A", "A", "B", "C"], "ciudad_destino": ["CALI"] * 4, "mes": pd.to_datetime(["2025-05-02"] * 4),
+        "documento": [None] * 4, "factura": ["F1"] * 4, "valor_flete": [100.0] * 4,
+        "tipo_despacho": ["CLIENTES ", "CLIENTES ", "CX", "CLIENTES"],
+        "peso": [10.0, 10.0, 3.0, 0.0],
+        "fecha_captura": pd.to_datetime(["2025-05-10"] * 4),
+        "fecha_entrega": pd.to_datetime(["2025-05-12"] * 4),
+        "dias_promesa_entrega": [2.0, 2.0, 2.0, 2.0],
+    })
+    resultado = dp.clean_shipments(df)
+    assert resultado["tipo_despacho"].tolist() == ["CLIENTES", "OTROS"]
+
+
+def test_excluir_am_reconoce_la_ciudad_con_espacios_o_minusculas():
+    # En ene–jun 2024 la ciudad viene " MOSQUERA" y se colaba al modelo
+    df = pd.DataFrame({"sede": ["0111", "0111", "0111"], "ciudad_destino": [" MOSQUERA", "mosquera ", "CALI"]})
+    assert dp.exclude_metro_area(df)["ciudad_destino"].tolist() == ["CALI"]
+
+
+def test_normalizar_ciudad_quita_comillas_y_corrige_nombres():
+    ciudades = pd.Series(["'BARRANQUILLA", "b/quilla ", "SANTAMARTA", "MEDELLIN Y SABANETA", "IBAGUÉ", "0"])
+    assert dp.normalize_city(ciudades).tolist() == \
+        ["BARRANQUILLA", "BARRANQUILLA", "SANTA MARTA", "MEDELLIN", "IBAGUE", "0"]
+
+
+def test_la_gran_via_queda_en_magdalena():
+    divipola = pd.read_excel(dp.EXTERNAL / "divipola.xlsx")
+    for columna in ("Municipio", "CentroPoblado", "Departamento"):
+        divipola[columna] = dp.normalize_city(divipola[columna])
+    df = pd.DataFrame({"ciudad_destino": dp.normalize_city(pd.Series(["LA GRAN VI"]))})
+    resultado = dp.search_department(df, divipola)
+    assert resultado.loc[0, "ciudad_destino"] == "LA GRAN VIA"
+    assert resultado.loc[0, "departamento"] == "MAGDALENA"
+
+
+def test_corregir_ciudad_segun_origen_san_jose_d():
+    # "SAN JOSE D": desde Mosquera es San José del Guaviare; desde Sabaneta, San José del Nus
+    df = pd.DataFrame({"sede": ["0111", "0106", "0212", "0211"], "ciudad_destino": ["SAN JOSE D"] * 4})
+    assert dp.correct_city_by_origin(df)["ciudad_destino"].tolist() == \
+        ["SAN JOSE DEL GUAVIARE", "SAN JOSE DEL NUS", "SAN JOSE DEL NUS", "SAN JOSE D"]
+
+
+def test_mapear_region_resuelve_guamal_del_meta():
+    # GUAMAL existe en Magdalena y en Meta: "GUAMAL - META" va a la región del Meta
+    df = pd.DataFrame({"ciudad_destino": ["GUAMAL - META"], "departamento": [None], "guia": ["1"], "sede": ["0111"]})
+    assert dp.map_region(df).loc[0, "region_logistica"] == "CENTRO"
+
+
+def _registros(**columnas):
+    # Filas con la misma guía, fecha, peso y destino; lo que cambia viene en columnas
+    n = len(next(iter(columnas.values())))
+    base = {"guia": ["G1"] * n, "fecha_captura": pd.to_datetime(["2026-05-29"] * n), "peso": [100.0] * n,
+            "ciudad_destino": ["CALI"] * n, "mes": pd.to_datetime(["2026-05-02"] * n),
+            "tipo_despacho": ["TRASLADOS"] * n, "valor_flete": [1000.0] * n,
+            "documento": [None] * n, "factura": ["F1"] * n}
+    base.update(columnas)
+    return pd.DataFrame(base)
+
+
+def test_registros_repetidos_con_documentos_distintos_se_dejan_todos():
+    # Pedidos distintos en el mismo camión (la guía es la placa)
+    df = _registros(documento=["AK-1", "AK-2", "AK-3"])
+    assert len(dp.resolve_duplicate_records(df)) == 3
+
+
+def test_registros_repetidos_con_cobro_partido_se_unen_sumando_el_flete():
+    df = _registros(tipo_despacho=["TRASLADOS", "OTROS"], valor_flete=[2_000_000.0, 300_000.0])
+    resultado = dp.resolve_duplicate_records(df)
+    assert len(resultado) == 1
+    assert resultado.iloc[0]["valor_flete"] == 2_300_000
+    assert resultado.iloc[0]["tipo_despacho"] == "TRASLADOS"   # el tipo del cobro mayor
+    assert resultado.iloc[0]["peso"] == 100                    # el peso una sola vez
+
+
+def test_registros_repetidos_con_otro_tipo_y_mismo_flete_dejan_el_de_clientes():
+    # Patrón A (decisión de Johan del 2026-11-16): se deja la fila de CLIENTES
+    df = _registros(tipo_despacho=["TRASLADOS", "CLIENTES"])
+    resultado = dp.resolve_duplicate_records(df)
+    assert resultado["tipo_despacho"].tolist() == ["CLIENTES"]
+
+
+def test_registros_repetidos_con_otro_tipo_y_mismo_flete_sin_clientes_dejan_uno():
+    df = _registros(tipo_despacho=["TRASLADOS", "TRASLADOS AL GASTO"])
+    assert len(dp.resolve_duplicate_records(df)) == 1
+
+
+def test_registros_repetidos_facturados_dos_veces_dejan_el_que_trae_documento():
+    df = _registros(documento=[None, "TR-1"], factura=["FE1", "FE2"],
+                    mes=pd.to_datetime(["2024-04-02", "2024-05-02"]), valor_flete=[400_000.0, 380_000.0])
+    resultado = dp.resolve_duplicate_records(df)
+    assert resultado["documento"].tolist() == ["TR-1"]
+
+
+def test_registros_repetidos_con_documentos_distintos_y_una_factura_no_se_unen():
+    # Un camión con varios pedidos y una sola factura: no es un cobro partido
+    df = _registros(documento=["AK-1", "TR-2"], tipo_despacho=["CLIENTES", "TRASLADOS AL GASTO"],
+                    valor_flete=[2_000.0, 500.0])
+    assert len(dp.resolve_duplicate_records(df)) == 2
+
+
+def test_registros_sin_guia_o_sin_peso_no_se_agrupan():
+    df = _registros(guia=[None, None], peso=[np.nan, np.nan], documento=[None, None], factura=["F1", None])
+    assert len(dp.resolve_duplicate_records(df)) == 2
+
+
+def test_registros_repetidos_sin_ninguna_factura_se_dejan_todos():
+    # Flota propia: la guía es la placa, muchos pedidos sin factura; no hay cómo saber si son repetidos
+    df = _registros(documento=["AJ-1", None], factura=[None, None], valor_flete=[0.0, 0.0])
+    assert len(dp.resolve_duplicate_records(df)) == 2
+
+
+def test_registros_repetidos_sin_factura_dejan_la_copia_con_factura():
+    df = _registros(documento=["NO DISPONIBLE", None], factura=["FE1", None])
+    resultado = dp.resolve_duplicate_records(df)
+    assert resultado["factura"].tolist() == ["FE1"]
+
+
 # -------------------------------------------------- correcciones de datos
 
 def test_completar_ciudad_destino_solo_rellena_vacios_de_guias_conocidas(monkeypatch):
