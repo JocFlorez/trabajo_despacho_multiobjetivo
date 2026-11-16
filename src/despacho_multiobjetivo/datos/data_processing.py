@@ -525,8 +525,10 @@ def fill_units(df: pd.DataFrame) -> pd.DataFrame:
     df["unidades"] = df["unidades"].mask(df["unidades"] == 0).fillna(unidades_estimadas)
     return df
 
-def process_shipments() -> pd.DataFrame:
-    df = load_shipments()
+def process_shipments(df: pd.DataFrame | None = None) -> pd.DataFrame:
+    # Sin argumento lee el Excel de despachos; con un DataFrame ya cargado (p. ej. el histórico 2024–2026 en
+    # parquet, con las columnas en snake_case) le aplica la misma limpieza
+    df = load_shipments() if df is None else clean_column_types(df)
     df = fill_destination_city(df)
     df = fill_units(df)
     df = clean_shipments(df)

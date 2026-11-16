@@ -80,5 +80,11 @@
     "3": 0.05,
     "4": 0.05
   },
-  "valor_declarado_cotizacion": 100000
+  "valor_declarado_cotizacion": 100000,
+  "aumento_tarifa": {
+    "2025": {
+      "ENVIA": 0.05,
+      "OTRAS": 0.05
+    }
+  }
 }
