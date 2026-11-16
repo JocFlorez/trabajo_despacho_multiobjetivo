@@ -20,6 +20,7 @@ import pandas as pd
 from despacho_multiobjetivo.datos import data_processing as dp
 
 SERIE_INICIO, SERIE_FIN = "2024-01-08", "2026-10-25"
+ANIO_TARIFAS = 2026   # año de las tarifas del cotizador (COTIZADOR 2026)
 
 
 def cached_direct_freight(despachos: pd.DataFrame) -> pd.Series:
@@ -32,20 +33,31 @@ def cached_direct_freight(despachos: pd.DataFrame) -> pd.Series:
     return pd.Series(cruce["flete"].values, index=despachos.index, name="flete_actualizado")
 
 
-def updated_freight(despachos: pd.DataFrame, cotizado: pd.Series, aumentos: dict) -> pd.Series:
+def tariff_factors(aumentos_anuales: dict, anio_tarifas: int = ANIO_TARIFAS) -> dict:
+    # Factor para llevar lo pagado en cada año a las tarifas de anio_tarifas: el producto de los aumentos con los que
+    # se entró a cada año siguiente, hasta anio_tarifas. El año de las tarifas no lleva factor.
+    # aumentos_anuales: {"año": {"ENVIA": aumento, "OTRAS": aumento}}, con el aumento con el que se entró a ese año
+    # (del archivo privado: son datos comerciales). Ej.: 2024 → 2026 = (1 + aumento 2025) × (1 + aumento 2026)
+    anios = sorted(int(anio) for anio in aumentos_anuales)
+    factores = {}
+    for anio in range(min(anios) - 1, anio_tarifas):
+        siguientes = [aumentos_anuales[str(k)] for k in range(anio + 1, anio_tarifas + 1) if str(k) in aumentos_anuales]
+        factores[anio] = {grupo: float(np.prod([1 + a[grupo] for a in siguientes])) for grupo in ("ENVIA", "OTRAS")}
+    return factores
+
+
+def updated_freight(despachos: pd.DataFrame, cotizado: pd.Series, factores: dict) -> pd.Series:
     # Flete actualizado a las tarifas de este año (regla de Johan del 2026-11-16). Por cada despacho de un año con
-    # aumento definido: si el cotizado con las tarifas de este año es menor que lo que se pagó, el actualizado es lo
-    # pagado × (1 + aumento de tarifa de su transportadora); si no, el cotizado. Años sin aumento definido y
-    # despachos sin flete pagado: el cotizado. Sin cotización: vacío.
-    # aumentos: {"año": {"ENVIA": aumento, "OTRAS": aumento}} (del archivo privado: son datos comerciales)
+    # factor (tariff_factors): si el cotizado con las tarifas de este año es menor que lo que se pagó, el actualizado
+    # es lo pagado × el factor de su transportadora (ENVIA u otras); si no, el cotizado. Años sin factor y despachos
+    # sin flete pagado: el cotizado. Sin cotización: vacío.
     actualizado = cotizado.copy()
-    anio = despachos["fecha_captura"].dt.year.astype("Int64").astype(str)
+    anio = despachos["fecha_captura"].dt.year
     transportadora = despachos["transportadora"].astype("string").str.upper().str.strip().replace(dp.NOMBRE_TRANSPORTADORA)
-    for anio_regla, aumento in aumentos.items():
-        factor = np.where(transportadora == "ENVIA", 1 + aumento["ENVIA"], 1 + aumento["OTRAS"])
-        pagado_con_aumento = despachos["valor_flete"] * factor
+    for anio_regla, factor in factores.items():
+        multiplicador = np.where(transportadora == "ENVIA", factor["ENVIA"], factor["OTRAS"])
         sube = (anio == anio_regla) & (despachos["valor_flete"] > 0) & (cotizado < despachos["valor_flete"])
-        actualizado = actualizado.where(~sube.fillna(False).astype(bool), pagado_con_aumento)
+        actualizado = actualizado.where(~sube.fillna(False).astype(bool), despachos["valor_flete"] * multiplicador)
     return actualizado
 
 

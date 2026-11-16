@@ -82,35 +82,47 @@ def test_flete_directo_de_la_cache_sin_abrir_excel(monkeypatch):
     assert np.isnan(fletes.iloc[1])                             # sin cotizar todavía
 
 
-AUMENTOS = {"2025": {"ENVIA": 0.10, "OTRAS": 0.05}}   # inventados (los reales están en el archivo privado)
+# Aumento con el que se entra a cada año (inventados: los reales están en el archivo privado)
+AUMENTOS_ANUALES = {"2025": {"ENVIA": 0.20, "OTRAS": 0.10}, "2026": {"ENVIA": 0.10, "OTRAS": 0.05}}
+
+
+def test_factores_multiplican_los_aumentos_de_los_anios_siguientes():
+    factores = diarias.tariff_factors(AUMENTOS_ANUALES, 2026)
+    assert factores[2024]["ENVIA"] == pytest.approx(1.20 * 1.10)
+    assert factores[2024]["OTRAS"] == pytest.approx(1.10 * 1.05)
+    assert factores[2025] == pytest.approx({"ENVIA": 1.10, "OTRAS": 1.05})
+    assert 2026 not in factores                                # el año de las tarifas no se ajusta
 
 
 def _guias():
     return pd.DataFrame({
-        "fecha_captura": pd.to_datetime(["2025-05-02", "2025-05-02", "2025-05-02", "2026-05-02", "2025-05-02"]),
-        "transportadora": ["COLVANES", "SERVIENTREGA", "COLVANES", "COLVANES", "FRACOR"],
-        "valor_flete": [100_000.0, 100_000.0, 100_000.0, 100_000.0, np.nan],
+        "fecha_captura": pd.to_datetime(["2025-05-02", "2025-05-02", "2025-05-02", "2026-05-02", "2025-05-02",
+                                         "2024-05-02"]),
+        "transportadora": ["COLVANES", "SERVIENTREGA", "COLVANES", "COLVANES", "FRACOR", "COLVANES"],
+        "valor_flete": [100_000.0, 100_000.0, 100_000.0, 100_000.0, np.nan, 100_000.0],
     })
 
 
+def _actualizado(cotizado):
+    return diarias.updated_freight(_guias(), pd.Series(cotizado), diarias.tariff_factors(AUMENTOS_ANUALES, 2026))
+
+
 def test_si_el_cotizado_es_menor_que_lo_pagado_se_usa_lo_pagado_con_el_aumento():
-    cotizado = pd.Series([80_000.0, 80_000.0, 120_000.0, 80_000.0, 80_000.0])
-    actualizado = diarias.updated_freight(_guias(), cotizado, AUMENTOS)
-    assert actualizado.iloc[0] == pytest.approx(110_000)       # ENVIA (Colvanes): + 10 %
-    assert actualizado.iloc[1] == pytest.approx(105_000)       # otra transportadora: + 5 %
+    actualizado = _actualizado([80_000.0, 80_000.0, 120_000.0, 80_000.0, 80_000.0, 80_000.0])
+    assert actualizado.iloc[0] == pytest.approx(110_000)       # ENVIA (Colvanes) 2025: + 10 %
+    assert actualizado.iloc[1] == pytest.approx(105_000)       # otra transportadora 2025: + 5 %
     assert actualizado.iloc[2] == 120_000                      # el cotizado ya es mayor: se queda
+    assert actualizado.iloc[5] == pytest.approx(132_000)       # ENVIA 2024: + 20 % y + 10 %
 
 
-def test_anios_sin_aumento_definido_y_guias_sin_flete_pagado_quedan_con_el_cotizado():
-    cotizado = pd.Series([80_000.0, 80_000.0, 120_000.0, 80_000.0, 80_000.0])
-    actualizado = diarias.updated_freight(_guias(), cotizado, AUMENTOS)
-    assert actualizado.iloc[3] == 80_000                       # 2026: sin regla definida
+def test_el_anio_de_las_tarifas_y_las_guias_sin_flete_pagado_quedan_con_el_cotizado():
+    actualizado = _actualizado([80_000.0, 80_000.0, 120_000.0, 80_000.0, 80_000.0, 80_000.0])
+    assert actualizado.iloc[3] == 80_000                       # 2026: falta decidir la regla
     assert actualizado.iloc[4] == 80_000                       # sin flete pagado
 
 
 def test_sin_cotizacion_el_actualizado_queda_vacio():
-    cotizado = pd.Series([np.nan] * 5)
-    assert diarias.updated_freight(_guias(), cotizado, AUMENTOS).isna().all()
+    assert _actualizado([np.nan] * 6).isna().all()
 
 
 def test_procesar_despachos_acepta_un_dataframe_ya_cargado(monkeypatch):

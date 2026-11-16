@@ -3,7 +3,7 @@ import json
 from despacho_multiobjetivo import datos_empresa
 
 LLAVES = {"archivo_despachos", "guia_region", "guia_ciudad", "cumplimiento_envia", "histograma_dias_tarde",
-          "valor_declarado_cotizacion"}
+          "valor_declarado_cotizacion", "aumento_tarifa_anual"}
 
 
 def test_sin_archivo_privado_usa_el_ejemplo_y_avisa(tmp_path, capsys):

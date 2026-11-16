@@ -81,8 +81,12 @@
     "4": 0.05
   },
   "valor_declarado_cotizacion": 100000,
-  "aumento_tarifa": {
+  "aumento_tarifa_anual": {
     "2025": {
+      "ENVIA": 0.05,
+      "OTRAS": 0.05
+    },
+    "2026": {
       "ENVIA": 0.05,
       "OTRAS": 0.05
     }

@@ -5,8 +5,9 @@ Se leen de data/external/datos_empresa.json, que no se versiona (data/ está exc
 datos_empresa_ejemplo.json (junto a este archivo), con el mismo formato y valores inventados, y se avisa.
 Variables:
   DATOS: el contenido del JSON como diccionario, con las llaves archivo_despachos, guia_region, guia_ciudad,
-    cumplimiento_envia (lista de {sede, region, valor}), histograma_dias_tarde ({días: probabilidad}) y
-    valor_declarado_cotizacion
+    cumplimiento_envia (lista de {sede, region, valor}), histograma_dias_tarde ({días: probabilidad}),
+    valor_declarado_cotizacion, nombre_empresa (para el control antes de subir) y aumento_tarifa_anual
+    ({año: {ENVIA, OTRAS}}: aumento de tarifa con el que se entró a ese año, para el flete actualizado)
 """
 import json
 from pathlib import Path

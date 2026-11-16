@@ -28,7 +28,8 @@ if __name__ == "__main__":
     # 1. Despachos de la sede con la limpieza del modelo y el flete actualizado de la caché
     despachos = select_shipments(dp.process_shipments(pd.read_parquet(COPIA_DESPACHOS)), SEDE)
     cotizado = diarias.cached_direct_freight(despachos)
-    despachos["flete_actualizado"] = diarias.updated_freight(despachos, cotizado, DATOS.get("aumento_tarifa", {}))
+    factores = diarias.tariff_factors(DATOS["aumento_tarifa_anual"])
+    despachos["flete_actualizado"] = diarias.updated_freight(despachos, cotizado, factores)
 
     # 2. Series y archivos
     for nombre, por_region in (("total", False), ("region", True)):
