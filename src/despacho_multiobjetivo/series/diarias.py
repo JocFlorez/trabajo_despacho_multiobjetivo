@@ -35,12 +35,13 @@ def cached_direct_freight(despachos: pd.DataFrame) -> pd.Series:
 
 def tariff_factors(aumentos_anuales: dict, anio_tarifas: int = ANIO_TARIFAS) -> dict:
     # Factor para llevar lo pagado en cada año a las tarifas de anio_tarifas: el producto de los aumentos con los que
-    # se entró a cada año siguiente, hasta anio_tarifas. El año de las tarifas no lleva factor.
+    # se entró a cada año siguiente, hasta anio_tarifas. El año de las tarifas lleva factor 1 (aumento 0 %: lo pagado
+    # ese año ya está a sus tarifas; decisión de Johan del 2026-11-16).
     # aumentos_anuales: {"año": {"ENVIA": aumento, "OTRAS": aumento}}, con el aumento con el que se entró a ese año
     # (del archivo privado: son datos comerciales). Ej.: 2024 → 2026 = (1 + aumento 2025) × (1 + aumento 2026)
     anios = sorted(int(anio) for anio in aumentos_anuales)
     factores = {}
-    for anio in range(min(anios) - 1, anio_tarifas):
+    for anio in range(min(anios) - 1, anio_tarifas + 1):
         siguientes = [aumentos_anuales[str(k)] for k in range(anio + 1, anio_tarifas + 1) if str(k) in aumentos_anuales]
         factores[anio] = {grupo: float(np.prod([1 + a[grupo] for a in siguientes])) for grupo in ("ENVIA", "OTRAS")}
     return factores

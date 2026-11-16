@@ -91,7 +91,7 @@ def test_factores_multiplican_los_aumentos_de_los_anios_siguientes():
     assert factores[2024]["ENVIA"] == pytest.approx(1.20 * 1.10)
     assert factores[2024]["OTRAS"] == pytest.approx(1.10 * 1.05)
     assert factores[2025] == pytest.approx({"ENVIA": 1.10, "OTRAS": 1.05})
-    assert 2026 not in factores                                # el año de las tarifas no se ajusta
+    assert factores[2026] == {"ENVIA": 1.0, "OTRAS": 1.0}       # el año de las tarifas: aumento 0 %
 
 
 def _guias():
@@ -115,9 +115,9 @@ def test_si_el_cotizado_es_menor_que_lo_pagado_se_usa_lo_pagado_con_el_aumento()
     assert actualizado.iloc[5] == pytest.approx(132_000)       # ENVIA 2024: + 20 % y + 10 %
 
 
-def test_el_anio_de_las_tarifas_y_las_guias_sin_flete_pagado_quedan_con_el_cotizado():
+def test_en_el_anio_de_las_tarifas_se_usa_lo_pagado_sin_aumento_y_sin_flete_pagado_el_cotizado():
     actualizado = _actualizado([80_000.0, 80_000.0, 120_000.0, 80_000.0, 80_000.0, 80_000.0])
-    assert actualizado.iloc[3] == 80_000                       # 2026: falta decidir la regla
+    assert actualizado.iloc[3] == 100_000                      # 2026: lo pagado, aumento 0 % (Johan, 2026-11-16)
     assert actualizado.iloc[4] == 80_000                       # sin flete pagado
 
 
