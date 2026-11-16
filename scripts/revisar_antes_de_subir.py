@@ -118,6 +118,7 @@ def install_hook() -> None:
     hook.write_text("#!/bin/sh\n"
                     "# Control de datos de la empresa antes de subir (ver scripts/revisar_antes_de_subir.py)\n"
                     'RAIZ="$(git rev-parse --show-toplevel)"\n'
+                    'export PYTHONIOENCODING=utf-8\n'
                     'exec "$RAIZ/.venv/Scripts/python.exe" "$RAIZ/scripts/revisar_antes_de_subir.py" "$@"\n',
                     encoding="utf-8", newline="\n")
     print(f"Hook instalado en {hook}")
